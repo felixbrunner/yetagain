@@ -1,2 +1,2 @@
-# carrots
-package for estimation of hidden markov models (in construction)
+# carrots (in construction)
+This is a package for estimation, simulation and forecasting with Hidden Markov Models.
