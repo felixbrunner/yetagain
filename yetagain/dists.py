@@ -199,9 +199,10 @@ class StudentTDistribution(BaseDistribution):
             #odd moments of a student t are zero
             central_moment = 0
         else:
-            #even moments are given by sigma^n times the double factorial
-            #central_moment = self.sigma**moment * sp.special.factorialk(moment-1, 2)
-            raise NotImplementedError('even central moments not implemented')
+            #even moments are given by...
+            assert self.df > moment, \
+                'moment {} does not exist for distribution with {} degrees of freedom'.format(round(moment, 4), round(self.df, 4))
+            central_moment = sp.special.gamma((moment+1)/2) /np.sqrt(np.pi) * self.df**(moment/2) / (self.df/2-np.arange(1, (moment/2)+1)).prod()
         return central_moment
     
     def mean(self):
@@ -217,15 +218,13 @@ class StudentTDistribution(BaseDistribution):
     
     def skew(self):
         '''Returns the distribution skewness.'''
-        #skew = self.standardised_moment(3)
-        #return skew
-        return 0
+        skew = self.standardised_moment(3)
+        return skew
 
     def kurt(self):
         '''Returns the distribution kurtosis.'''
-        #kurt = self.standardised_moment(4)
-        #return kurt
-        raise NotImplementedError('Kurtosis not implemented.')
+        kurt = self.standardised_moment(4)
+        return kurt
 
     def pdf(self, x):
         '''Returns the probability density function value for input numbers.'''
