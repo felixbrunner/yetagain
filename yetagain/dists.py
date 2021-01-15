@@ -3,11 +3,12 @@
 import numpy as np
 import scipy as sp
 import pandas as pd
+import warnings
 
 ### CLASSES ###
 
-class BaseDistribution:
-    '''Base class for distributions.'''
+class DistributionMixin:
+    '''Mixin class for distributions.'''
 
     def __init__(self):
         pass
@@ -47,12 +48,25 @@ class BaseDistribution:
             excess_moment = standardised_moment - bias
         return excess_moment
 
+    def score(self, Y, weights=None):
+        '''Returns the (weighted) log-likelihood of a sample.'''
+
+        if weights is None:
+            weights = np.ones(Y.shape)
+        else:
+            weights = np.array(weights)
+
+        score = (weights * np.log(self.pdf(Y))).sum()
+        return score
+
     def __repr__(self):
         return str(self)
 
-class NormalDistribution(BaseDistribution):
+
+
+class NormalDistribution(DistributionMixin):
     '''A normal distribution.
-    If no parameters are specified, a standard normal distribution.
+    If no parameters are specified, defaults to a standard normal distribution.
     '''
     
     def __init__(self, mu=0, sigma=1):
@@ -127,7 +141,7 @@ class NormalDistribution(BaseDistribution):
         y = sp.stats.norm(loc=self.mu, scale=self.sigma).cdf(x)
         return y
     
-    def rvs(self, size=1):
+    def draw(self, size=1):
         '''Draws random numbers from the distribution.'''
         sample = sp.stats.norm(loc=self.mu, scale=self.sigma).rvs(size=size)
         if size == 1:
@@ -141,7 +155,7 @@ class NormalDistribution(BaseDistribution):
 
 
 
-class StudentTDistribution(BaseDistribution):
+class StudentTDistribution(DistributionMixin):
     '''A student t distribution.
     If no parameters are specified, a standard normal distribution.
     '''
@@ -236,7 +250,7 @@ class StudentTDistribution(BaseDistribution):
         y = sp.stats.t(loc=self.mu, scale=self.sigma, df=self.df).cdf(x)
         return y
 
-    def rvs(self, size=1):
+    def draw(self, size=1):
         '''Draws random numbers from the distribution.'''
         sample = sp.stats.t(loc=self.mu, scale=self.sigma, df=self.df).rvs(size=size)
         if size == 1:
@@ -249,8 +263,9 @@ class StudentTDistribution(BaseDistribution):
         return string
 
 
-class MixtureDistribution(BaseDistribution):
-    '''A mixture distribution is a list of triples that parametrise the components of a Mixture distribution.
+
+class MixtureDistribution(DistributionMixin):
+    '''A mixture distribution is a list of tuples that parametrise the components of a Mixture distribution.
     Each component tuple is a pair of distribution and probability weight of the component.
     '''
     
@@ -261,7 +276,7 @@ class MixtureDistribution(BaseDistribution):
     def _check_component(self, component):
         '''Checks component inputs.'''
         dist, weight = component
-        assert isinstance(dist, BaseDistribution), \
+        assert isinstance(dist, DistributionMixin), \
             'unknown component distribution type'
         assert type(weight) == float or type(weight) == int or type(weight) == np.float64, \
             'weight needs to be numeric'
@@ -378,10 +393,10 @@ class MixtureDistribution(BaseDistribution):
             y += weight*component.cdf(x)
         return y
 
-    def rvs(self, size=1, return_states=False):
+    def draw(self, size=1, return_states=False):
         '''Draw a random sample from a mixture distribution.'''
         states = np.random.choice(self.n_components, size=size, replace=True, p=self.weights)
-        sample = np.fromiter((self.components[i][0].rvs() for i in states), dtype=np.float64)
+        sample = np.fromiter((self.components[i][0].draw() for i in states), dtype=np.float64)
         
         if size is 1:
             sample = sample[0]
@@ -401,7 +416,7 @@ class MixtureDistribution(BaseDistribution):
     
 
 
-class ProductDistribution(BaseDistribution):
+class ProductDistribution(DistributionMixin):
     '''A ProducDistribution is a list of tuples that contains the first central moments of the factor distributions.
     Note that the input moments have to be non-standardised and factor draws have to be independent.
     '''
@@ -412,7 +427,7 @@ class ProductDistribution(BaseDistribution):
         
     def _check_factor(self, factor):
         '''Checks factor inputs.'''
-        assert isinstance(factor, BaseDistribution), \
+        assert isinstance(factor, DistributionMixin), \
             'unknown factor distribution type'
 
         
@@ -489,11 +504,11 @@ class ProductDistribution(BaseDistribution):
         kurt = fourth_central_moment/(self.var()**2)#-3
         return kurt
 
-    def rvs(self, size=1):
+    def draw(self, size=1):
         '''Returns a random sample drawn from a mixture distribution.'''
         sample = np.ones(size)
         for factor in self.factors:
-            sample *= factor.rvs(size=size)
+            sample *= factor.draw(size=size)
 
         if size is 1:
             sample = sample[0]
