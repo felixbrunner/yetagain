@@ -6,16 +6,19 @@ import warnings
 from yetagain.dists import NormalDistribution, MixtureDistribution, StudentTDistribution
 
 
-class BaseModel:
-    '''Base class for models.'''
+class ModelMixin:
+    '''Mixin class for models.'''
     
-    def __init__(self):
-        pass
+    # def score(self, Y, weights=None):
+    #     '''Returns the (weighted) log-likelihood of an observation sequence.'''
 
-    def score(self, Y):
-        '''Returns the log-likelihood of an observation sequence.'''
-        score = np.log(self.pdf(Y)).sum()
-        return score
+    #     if weights is None:
+    #         weights = np.ones(Y.shape)
+    #     else:
+    #         weights = np.array(weights)
+
+    #     score = (weights * np.log(self.pdf(Y))).sum()
+    #     return score
 
     def iterate(self, steps=1):
         '''Iterates the model forward the input number of steps.'''
@@ -25,7 +28,7 @@ class BaseModel:
         return str(self)
 
 
-class NormalModel(BaseModel, NormalDistribution):
+class NormalModel(ModelMixin, NormalDistribution):
     '''i.i.d. normal distribution model.'''
     
     def __init__(self, mu=0, sigma=1):
@@ -79,7 +82,7 @@ class NormalModel(BaseModel, NormalDistribution):
         return string
 
 
-class StudentTModel(BaseModel, StudentTDistribution):
+class StudentTModel(ModelMixin, StudentTDistribution):
     '''i.i.d. normal distribution model.'''
     
     def __init__(self, mu=0, sigma=1, df=np.inf):
@@ -119,6 +122,9 @@ class StudentTModel(BaseModel, StudentTDistribution):
         '''Performs parameter estimation with the Expectation Maximisation algorithm.
         Returns a fitted model.
         Returns the the fitted model and parameters of the estimation if return_fit=True.
+        References: 
+         - Liu/Rubin (1995) : ML estimation of the t distribution using EM and its extensions, ECM and ECME
+         - Gerogiannis/Nikou/Likas (2009): The mixtures of Student's t-distributions as a robust framework for rigid registration
         '''
         
         # initialise
@@ -132,18 +138,13 @@ class StudentTModel(BaseModel, StudentTDistribution):
         
         while iteration < max_iter:
             iteration += 1
-            w_ = self._do_e_step(Y, weights, params_)
-            params_ = self._do_m_step(Y, w_, params_[0])
+            w_ = self._do_e_step(Y, params_)
+            params_ = self._do_m_step(Y, weights, w_, params_[0])
             score_= self._score(Y, weights, params_)
             scores[iteration] = score_
             
             if abs(scores[iteration]-scores[iteration-1]) < threshold:
-                converged = True
-                
-                # approximate df
-                params_ = (params_[0]*weights.mean(), params_[1], params_[2])
-                warnings.warn('df parameter is only approximated')
-                
+                converged = True                
                 break
         else:
             converged = False
@@ -169,27 +170,29 @@ class StudentTModel(BaseModel, StudentTDistribution):
     def _score(self, Y, weights, params_):
         '''Scores a (weighted) sample as log-likelihood given a set of parameters.'''
         likelihoods_ = sp.stats.t(*params_).pdf(Y) 
-        score_ = sum(np.log(likelihoods_)* weights)
+        score_ = (weights*np.log(likelihoods_)).sum()
         return score_
         
-    def _do_e_step(self, Y, weights, params_):
+    def _do_e_step(self, Y, params_):
         '''Performs the expectation step to update estimation weights.'''
         (df_, mu_, sigma_) = params_
         w_ = ((df_+1)*sigma_**2) / (df_*sigma_**2 + (Y-mu_)**2)
-        w_ *= weights
+        #w_ *= weights
         return w_
         
-    def _do_m_step(self, Y, w_, df_):
+    def _do_m_step(self, Y, weights, w_, df_):
         '''Performs the maximisation step to update location and scale of the distribution.'''
-        # estimate mu
-        mu_ = np.average(Y, weights=w_)
+        # update mu
+        mu_ = np.average(Y, weights=weights*w_)
         
-        # estimate sigma
+        # update sigma
         errors = (Y-mu_)**2
-        sigma_ = np.sqrt(np.average(errors, weights=w_))
+        sigma_ = np.sqrt(np.average(errors*w_, weights=weights))
         
-        # approximate df
-        df_ = df_#*sum(w_)/len(w_)
+        # update df
+        const = 1 - np.log((df_+1)/2) + np.average(np.log(w_)-w_, weights=weights) + sp.special.digamma((df_+1)/2)
+        fun = lambda df: np.log(df/2) - sp.special.digamma(df/2) + const
+        df_ = sp.optimize.fsolve(fun, 50)[0]
 
         return (df_, mu_, sigma_)
     
@@ -216,7 +219,7 @@ class StudentTModel(BaseModel, StudentTDistribution):
         return string
         
         
-class MixtureModel(BaseModel, MixtureDistribution):
+class MixtureModel(ModelMixin, MixtureDistribution):
     '''mixture model of arbitrary distributions.'''
     
     def __init__(self, components=[]):
