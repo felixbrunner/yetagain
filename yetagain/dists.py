@@ -4,14 +4,12 @@ import numpy as np
 import scipy as sp
 import pandas as pd
 import warnings
+import copy
 
 ### CLASSES ###
 
 class DistributionMixin:
     '''Mixin class for distributions.'''
-
-    def __init__(self):
-        pass
 
     def std(self):
         '''Returns the distribution standard deviation.'''
@@ -48,16 +46,26 @@ class DistributionMixin:
             excess_moment = standardised_moment - bias
         return excess_moment
 
-    def score(self, Y, weights=None):
+    def likelihoods(self, y, X=None, latent=None):
+        '''Returns the likelihoods of the observations in a sample.'''
+        likelihoods = self.pdf(y)
+        return likelihoods
+
+    def score(self, y, X=None, weights=None, latent=None):
         '''Returns the (weighted) log-likelihood of a sample.'''
 
         if weights is None:
-            weights = np.ones(Y.shape)
+            weights = np.ones(y.shape)
         else:
             weights = np.array(weights)
 
-        score = (weights * np.log(self.pdf(Y))).sum()
+        score = (weights * np.log(self.pdf(y))).sum()
         return score
+
+    def copy(self):
+        '''Returns a deep copy with new memory address.'''
+        _dist = copy.deepcopy(self)
+        return _dist
 
     def __repr__(self):
         return str(self)
@@ -81,7 +89,7 @@ class NormalDistribution(DistributionMixin):
     
     @mu.setter
     def mu(self, mu):
-        assert type(mu) == int or type(mu) == float or type(mu) == np.float64, \
+        assert type(mu) in [int, float, np.float64], \
             'mu needs to be numeric'
         self._mu = mu
         
@@ -93,9 +101,14 @@ class NormalDistribution(DistributionMixin):
     
     @sigma.setter
     def sigma(self, sigma):
-        assert type(sigma) == int or type(sigma) == float or type(sigma) == np.float64, \
+        assert type(sigma) in [int, float, np.float64], \
             'sigma needs to be numeric'
         self._sigma = sigma
+
+    def set_variance(self, variance):
+        assert variance > 0, \
+            'variance needs to be a positive number'
+        self.sigma = np.sqrt(variance)
     
     
     def central_moment(self, moment):
@@ -133,13 +146,13 @@ class NormalDistribution(DistributionMixin):
     
     def pdf(self, x):
         '''Returns the probability density function value for input numbers.'''
-        y = sp.stats.norm(loc=self.mu, scale=self.sigma).pdf(x)
-        return y
+        fx = sp.stats.norm(loc=self.mu, scale=self.sigma).pdf(x)
+        return fx
     
     def cdf(self, x):
         '''Returns the cumulative density function value for input numbers.'''
-        y = sp.stats.norm(loc=self.mu, scale=self.sigma).cdf(x)
-        return y
+        Fx = sp.stats.norm(loc=self.mu, scale=self.sigma).cdf(x)
+        return Fx
     
     def draw(self, size=1):
         '''Draws random numbers from the distribution.'''
@@ -173,7 +186,7 @@ class StudentTDistribution(DistributionMixin):
 
     @mu.setter
     def mu(self, mu):
-        assert type(mu) == int or type(mu) == float or type(mu) == np.float64, \
+        assert type(mu) in [int, float, np.float64], \
             'mu needs to be numeric'
         self._mu = mu
 
@@ -185,7 +198,7 @@ class StudentTDistribution(DistributionMixin):
 
     @sigma.setter
     def sigma(self, sigma):
-        assert type(sigma) == int or type(sigma) == float or type(sigma) == np.float64, \
+        assert type(sigma) in [int, float, np.float64], \
             'sigma needs to be numeric'
         self._sigma = sigma
 
@@ -197,11 +210,16 @@ class StudentTDistribution(DistributionMixin):
 
     @df.setter
     def df(self, df):
-        assert type(df) == int or type(df) == float or type(df) == np.float64, \
+        assert type(df) in [int, float, np.float64], \
             'df needs to be numeric'
         assert df > 0, \
             'df needs to be a postive number'
         self._df = df
+
+    def set_variance(self, variance):
+        assert variance > 0, \
+            'variance needs to be a positive number'
+        self.sigma = np.sqrt(variance * (self.df-2) / self.df)
         
     def central_moment(self, moment):
         '''Returns the central moments of input order.'''
@@ -504,11 +522,16 @@ class ProductDistribution(DistributionMixin):
         kurt = fourth_central_moment/(self.var()**2)#-3
         return kurt
 
-    def draw(self, size=1):
+    def draw(self, size=1, add_one=False):
         '''Returns a random sample drawn from a mixture distribution.'''
         sample = np.ones(size)
-        for factor in self.factors:
-            sample *= factor.draw(size=size)
+        if add_one:
+            for factor in self.factors:
+                sample *= factor.draw(size=size)+1
+            sample -= 1
+        else:
+            for factor in self.factors:
+                sample *= factor.draw(size=size)
 
         if size is 1:
             sample = sample[0]

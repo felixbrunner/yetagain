@@ -5,26 +5,24 @@ import copy
 # from scipy.stats import norm
 
 from yetagain.dists import NormalDistribution, MixtureDistribution, StudentTDistribution
+from yetagain.estimation import EstimationMixin
 
 
 class ModelMixin:
     '''Mixin class for models.'''
-    
-    # def score(self, Y, weights=None):
-    #     '''Returns the (weighted) log-likelihood of an observation sequence.'''
 
-    #     if weights is None:
-    #         weights = np.ones(Y.shape)
-    #     else:
-    #         weights = np.array(weights)
-
-    #     score = (weights * np.log(self.pdf(Y))).sum()
-    #     return score
+    def __init__(self):
+        self.is_fitted = False
 
     def errors(self, y, method='mean'):
-        ''''''
-        errors = y - self.predict(y, method=method)
+        '''Returns errors made by the model when predicting input data.'''
+        errors = y - self.predict(y, X=None, method=method)
         return errors
+
+    def squared_errors(self, y, method='mean'):
+        '''Returns errors made by the model when predicting input data.'''
+        squared_errors = self.errors(y, method='mean')**2
+        return squared_errors
 
     def iterate(self, steps=1):
         '''Iterates the model forward the input number of steps.'''
@@ -44,13 +42,23 @@ class ModelMixin:
             'Model has no fitted parameters.'
         return self.params
 
+    def predict(self, y, X=None, method='mean'):
+        '''Returns an array with predicted values for an input sample.'''
+        y = np.array(y)
+        if method == 'mean':
+            predictions = np.full(shape=y.shape, fill_value=self.mean())
+        else:
+            raise NotImplementedError('Prediction method not implemented')
+        return predictions
 
-class NormalModel(EstimationMixin, ModelMixin, NormalDistribution):
+
+class NormalModel(ModelMixin, EstimationMixin, NormalDistribution):
     '''i.i.d. normal distribution model.'''
     
     def __init__(self, mu=0, sigma=1):
         self.mu = mu
         self.sigma = sigma
+        ModelMixin.__init__(self)
     
     @property
     def loc(self):
@@ -86,16 +94,7 @@ class NormalModel(EstimationMixin, ModelMixin, NormalDistribution):
         self.mu = float(mean)
         self.sigma = float(np.sqrt(variance))
         self.converged = True
-            
-    def predict(self, y, method='mean'):
-        '''Returns an array with predicted values for an input sample.'''
-        y = np.array(y)
-        if method == 'mean':
-            predictions = np.full(shape=y.shape, fill_value=self.mean())
-        else:
-            raise NotImplementedError('Prediction method not implemented')
-        return predictions
-    
+
 
     @property
     def distribution(self):
@@ -112,14 +111,14 @@ class NormalModel(EstimationMixin, ModelMixin, NormalDistribution):
         return string
 
 
-class StudentTModel(ModelMixin, StudentTDistribution):
+class StudentTModel(ModelMixin, EstimationMixin, StudentTDistribution):
     '''i.i.d. normal distribution model.'''
     
     def __init__(self, mu=0, sigma=1, df=np.inf):
         self.mu = mu
         self.sigma = sigma
         self.df = df
-        self.is_fitted = False
+        ModelMixin.__init__(self)
     
     @property
     def loc(self):
@@ -129,109 +128,49 @@ class StudentTModel(ModelMixin, StudentTDistribution):
     def scale(self):
         return self.sigma
     
-        
-    def fit(self, Y, weights=None, method='em'):
-        '''Fits the model parameters to an observation sequence.
-        Weights are optional.
-        '''        
-        # prepare weights
-        Y = np.array(Y)
-        if weights is None:
-            weights = np.ones(Y.shape)
-        else:
-            weights = np.array(weights)
-        
-        if method == 'em':
-            self = self._estimate_em_algorithm(Y, weights)
-            self.is_fitted = True
-        else:
-            raise NotImplementedError('fitting algorithm not implemented')
-        
-        
-    def _estimate_em_algorithm(self, Y, weights, max_iter=100, threshold=1e-6, return_fit=False):
-        '''Performs parameter estimation with the Expectation Maximisation algorithm.
-        Returns a fitted model.
-        Returns the the fitted model and parameters of the estimation if return_fit=True.
-        References: 
-         - Liu/Rubin (1995) : ML estimation of the t distribution using EM and its extensions, ECM and ECME
-         - Gerogiannis/Nikou/Likas (2009): The mixtures of Student's t-distributions as a robust framework for rigid registration
-        '''
-        
-        # initialise
-        Y = np.array(Y)
-        params_ = self._initialise_em(Y)
-        score_ = self._score(Y, weights, params_)
-        
-        # store
-        iteration = 0
-        scores = {iteration: score_}
-        
-        while iteration < max_iter:
-            iteration += 1
-            w_ = self._do_e_step(Y, params_)
-            params_ = self._do_m_step(Y, weights, w_, params_[0])
-            score_= self._score(Y, weights, params_)
-            scores[iteration] = score_
-            
-            if abs(scores[iteration]-scores[iteration-1]) < threshold:
-                converged = True                
-                break
-        else:
-            converged = False
-            warnings.warn('maximum number of iterations reached')
-                
-        self._update_params(params_)
-        
-        if return_fit:
-            fit = {'converged': converged,
-                   'iterations': iteration,
-                   'scores': scores,
-                  }
-            
-            return self, fit
-        else:
-            return self
-        
-    def _initialise_em(self, Y):
-        '''Intialises the EM algorithm using the equally weighted scipy implementation.'''
-        params_ = sp.stats.t.fit(Y)
-        return params_
+    @property
+    def params(self):
+        params = {'df': self.df,
+                  'mu': self.mu,
+                  'sigma': self.sigma}
+        return params
     
-    def _score(self, Y, weights, params_):
-        '''Scores a (weighted) sample as log-likelihood given a set of parameters.'''
-        likelihoods_ = sp.stats.t(*params_).pdf(Y) 
-        score_ = (weights*np.log(likelihoods_)).sum()
-        return score_
-        
-    def _do_e_step(self, Y, params_):
+    @params.setter
+    def params(self, params):
+        for k, v in params.items():
+            setattr(self, k, v)
+
+            
+    def _e_step(self, y):
         '''Performs the expectation step to update estimation weights.'''
-        (df_, mu_, sigma_) = params_
-        w_ = ((df_+1)*sigma_**2) / (df_*sigma_**2 + (Y-mu_)**2)
-        #w_ *= weights
-        return w_
+        # intialise the EM algorithm with the equally weighted scipy implementation
+        if self.iteration == 0:
+            (self.df, self.mu, self.sigma) = sp.stats.t.fit(y)
         
-    def _do_m_step(self, Y, weights, w_, df_):
+        # update weights
+        w_ = ((self.df+1)*self.sigma**2) / (self.df*self.sigma**2 + self.squared_errors(y))
+        self.w_ = w_
+
+    def _m_step(self, y, weights):
         '''Performs the maximisation step to update location and scale of the distribution.'''
         # update mu
-        mu_ = np.average(Y, weights=weights*w_)
+        self.mu = np.average(y, weights=weights*self.w_)
         
         # update sigma
-        errors = (Y-mu_)**2
-        sigma_ = np.sqrt(np.average(errors*w_, weights=weights))
+        squared_errors = self.squared_errors(y)
+        self.sigma = np.sqrt(np.average(squared_errors*self.w_, weights=weights))
         
         # update df
-        const = 1 - np.log((df_+1)/2) + np.average(np.log(w_)-w_, weights=weights) + sp.special.digamma((df_+1)/2)
+        const = 1 - np.log((self.df+1)/2) + np.average(np.log(self.w_)-self.w_, weights=weights) + sp.special.digamma((self.df+1)/2)
         fun = lambda df: np.log(df/2) - sp.special.digamma(df/2) + const
-        df_ = sp.optimize.fsolve(fun, df_)[0]
+        self.df = sp.optimize.fsolve(fun, self.df)[0]
 
-        return (df_, mu_, sigma_)
-    
-    def _update_params(self, params_):
-        '''Updates the stored model parameters.'''
-        (df_, mu_, sigma_) = params_
-        self.df = df_
-        self.mu = mu_
-        self.sigma = sigma_
+    def _step(self, y, X, weights):
+        '''Performs one estimation step.
+        Recalculates the distribution mean and variance.
+        '''
+        self._e_step(y)
+        self._m_step(y, weights)
         
     
     @property

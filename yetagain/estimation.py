@@ -93,11 +93,11 @@ class EstimationMixin:
         '''
         # initialise
         self._initialise_estimation(y, X, weights)
-        y, X, weights = self._prepare_data(y, X, weights=None)
+        y, X, weights = self._prepare_data(y, X, weights=weights)
         
         # run
         while self.iteration < max_iter and self.converged == False:
-            self.step(y, X=None, weights=None)
+            self.step(y, X=X, weights=weights)
             self._check_convergence(threshold=threshold)
             if self.iteration == max_iter:
                 warnings.warn('maximum number of iterations reached')
@@ -108,7 +108,8 @@ class EstimationMixin:
         '''Fits the model parameters to an observation sequence.
         weights are optional.
         '''
-        self =  self._estimate(y, X=None, weights=None, max_iter=100, threshold=1e-6)    
+        self =  self._estimate(y, X=X, weights=weights, max_iter=100, threshold=1e-6)
+        self.is_fitted = True 
     
     def __repr__(self):
         return str(self)
