@@ -1,6 +1,7 @@
 import numpy as np
 import scipy as sp
 import warnings
+import copy
 # from scipy.stats import norm
 
 from yetagain.dists import NormalDistribution, MixtureDistribution, StudentTDistribution
@@ -20,15 +21,31 @@ class ModelMixin:
     #     score = (weights * np.log(self.pdf(Y))).sum()
     #     return score
 
+    def errors(self, y, method='mean'):
+        ''''''
+        errors = y - self.predict(y, method=method)
+        return errors
+
     def iterate(self, steps=1):
         '''Iterates the model forward the input number of steps.'''
         return self
 
+    def copy(self):
+        '''Returns a deep copy with new memory address.'''
+        _model = copy.deepcopy(self)
+        return _model
+
     def __repr__(self):
         return str(self)
 
+    @property
+    def params_(self):
+        assert self.is_fitted, \
+            'Model has no fitted parameters.'
+        return self.params
 
-class NormalModel(ModelMixin, NormalDistribution):
+
+class NormalModel(EstimationMixin, ModelMixin, NormalDistribution):
     '''i.i.d. normal distribution model.'''
     
     def __init__(self, mu=0, sigma=1):
@@ -43,29 +60,42 @@ class NormalModel(ModelMixin, NormalDistribution):
     def scale(self):
         return self.sigma
     
-        
-    def fit(self, Y, weights=None):
-        '''Fits the model parameters to an observation sequence.
-        weights are optional.
-        '''        
-        # prepare
-        Y = np.array(Y)
-        if weights is None:
-            weights = np.ones(Y.shape)
-        else:
-            weights = np.array(weights)
-        
+    @property
+    def params(self):
+        params = {'mu': self.mu,
+                  'sigma': self.sigma}
+        return params
+    
+    @params.setter
+    def params(self, params):
+        for k, v in params.items():
+            setattr(self, k, v)
+            
+    def _step(self, y, X, weights):
+        '''Performs one estimation step.
+        Recalculates the distribution mean and variance.
+        '''
         # estimate mean
-        mean = np.average(Y, weights=weights)
+        mean = np.average(y, weights=weights)
         
         # estimate variance
-        errors = (Y-mean)**2
+        errors = (y-mean)**2
         variance = np.average(errors, weights=weights)
-        
-        # update
+            
+        # set attributes
         self.mu = float(mean)
         self.sigma = float(np.sqrt(variance))
-
+        self.converged = True
+            
+    def predict(self, y, method='mean'):
+        '''Returns an array with predicted values for an input sample.'''
+        y = np.array(y)
+        if method == 'mean':
+            predictions = np.full(shape=y.shape, fill_value=self.mean())
+        else:
+            raise NotImplementedError('Prediction method not implemented')
+        return predictions
+    
 
     @property
     def distribution(self):
@@ -74,7 +104,7 @@ class NormalModel(ModelMixin, NormalDistribution):
         '''
         norm = NormalDistribution(mu=self.mu, sigma=self.sigma)
         return norm
-
+    
 
     def __str__(self):
         '''Returns a summarizing string.'''
@@ -192,7 +222,7 @@ class StudentTModel(ModelMixin, StudentTDistribution):
         # update df
         const = 1 - np.log((df_+1)/2) + np.average(np.log(w_)-w_, weights=weights) + sp.special.digamma((df_+1)/2)
         fun = lambda df: np.log(df/2) - sp.special.digamma(df/2) + const
-        df_ = sp.optimize.fsolve(fun, 50)[0]
+        df_ = sp.optimize.fsolve(fun, df_)[0]
 
         return (df_, mu_, sigma_)
     
@@ -225,7 +255,7 @@ class MixtureModel(ModelMixin, MixtureDistribution):
     def __init__(self, components=[]):
         self.components = components
         
-    def fit(self, y):
+    def fit(self, Y, weights=None, method='em'):
         ### use EM algorithm
         raise NotImplementedError('fit method not implemented')
 
