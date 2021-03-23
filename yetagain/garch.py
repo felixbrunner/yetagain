@@ -34,6 +34,12 @@ class GARCHModel(ModelMixin, EstimationMixin):
         return q
     
     @property
+    def memory(self):
+        '''Maximum length of memory in the model.'''
+        memory = max(self.p, self.q)
+        return memory
+    
+    @property
     def means_model(self):
         return self._means_model
     
@@ -62,10 +68,12 @@ class GARCHModel(ModelMixin, EstimationMixin):
     @alphas.setter
     def alphas(self, alphas):
         if type(alphas) == np.ndarray:
-            alphas = alphas.to_list()
+            alphas = alphas.tolist()
         if type(alphas) in [int, float, np.float64]:
             alphas = [alphas]
-        self._alphas = np.array(alphas)
+        if len(alphas)==0:
+            raise NotImplementedError('GARCH(p,0) is currently not implemented')
+        self._alphas = alphas
         
     @property
     def betas(self):
@@ -75,10 +83,10 @@ class GARCHModel(ModelMixin, EstimationMixin):
     @betas.setter
     def betas(self, betas):
         if type(betas) == np.ndarray:
-            betas = betas.to_list()
+            betas = betas.tolist()
         if type(betas) in [int, float, np.float64]:
             betas = [betas]
-        self._betas = np.array(betas)
+        self._betas = betas
         
     @property
     def mu(self):
@@ -91,6 +99,28 @@ class GARCHModel(ModelMixin, EstimationMixin):
     @property
     def state(self):
         return self._state
+    
+    @property
+    def params(self):
+        # collect garch equation parameters
+        params = {'omega': self.omega,
+                  'alphas': self.alphas,
+                  'betas': self.betas,
+                 }
+        
+        # add means_model params to dict
+        params.update(self.means_model.params)
+        return params
+    
+    @params.setter
+    def params(self, params):
+        for k, v in params.items():
+            setattr(self, k, v)
+            
+    @property
+    def param_vector(self):
+        theta = np.array([self.omega] + self.alphas + self.betas).reshape(-1, 1)
+        return theta
     
     @state.setter
     def state(self, state):
@@ -122,28 +152,22 @@ class GARCHModel(ModelMixin, EstimationMixin):
         steady_state = self.omega/(1-sum(self.alphas)-sum(self.betas))
         return steady_state
     
-    def set_steady_state(self):
+    def set_to_steady_state(self):
         '''Set the steady state as the model state.'''
         self.state = self.steady_state
         
-    def _construct_lags(self):
-        '''Returns arrays of lagged states and errors.'''
-        if self.is_fitted:
-            states = self.states_[-self.p:]
-            epsilons = self.epsilons_[-self.q:]
-        else:
-            if self.state:
-                states = np.append(np.full(self.p-1, self.steady_state), self.state)
-            else:
-                states = np.full(self.p, self.steady_state)
-            epsilons = np.full(self.q, self.steady_state**0.5)
-            
-        return (states, epsilons)
+    @property
+    def steady_state_kurtosis(self):
+        ''''''
+        raise NotImplementedError('unconditional kurtosis not implemented')
         
     def draw(self, size=1, return_variances=False):
         '''Draw a random sequence of specified length.'''
         # set up
-        states, epsilons = self._construct_lags()
+        if self.is_fitted:
+            states, epsilons = self._start_recursion(warm_start=True)
+        else:
+            states, epsilons = self._start_recursion(warm_start=False)
         means_model = self.means_model.copy()
         variances = []
         sample = []
@@ -173,7 +197,7 @@ class GARCHModel(ModelMixin, EstimationMixin):
         If set_state=True, GARCHModel object is modified in place.
         '''
         # define past states
-        states, epsilons = self._construct_lags()
+        states, epsilons = self._start_recursion()
         
         # iterate state
         new_state = self.state
@@ -192,3 +216,181 @@ class GARCHModel(ModelMixin, EstimationMixin):
             new_garch = self.copy()
             new_garch.state = new_state
             return new_garch
+    
+    def _start_recursion(self, warm_start=False):
+        '''Returns arrays of lagged states and errors.'''
+        # warm start case
+        if warm_start:
+            assert self.is_fitted, \
+                'model is not fitted'
+            states = self.states_[-self.p:]
+            epsilons = self.epsilons_[-self.q:]
+        
+        # start from steady state case
+        else:
+            if self.state:
+                states = np.append(np.full(max(0, self.p-1), self.steady_state), self.state)
+            else:
+                states = np.full(max(0, self.p), self.steady_state)
+            epsilons = np.full(max(0, self.q), self.steady_state**0.5)
+        
+        # return empty arrays if order zero
+        if self.p==0:
+            states = np.array([])
+        if self.q==0:
+            epsilons = np.array([])
+        return (states, epsilons)
+        
+    def filter_states(self, y, X=None, warm_start=False, return_errors=False):
+        '''Filters the variance states from a given series.'''
+        # get previous states
+        states, epsilons = self._start_recursion(warm_start=warm_start)
+        
+        # set up storage arrays
+        if warm_start:
+            states_ = self.states_.copy()
+            epsilons_ = self.epsilons_.copy()
+        else:
+            states_ = []
+            epsilons_ = []
+            
+        # recursive filter
+        for y_t in y:
+            states_ += [self.omega + np.flip(self.betas)@states + np.flip(self.alphas)@epsilons**2]
+            epsilons_ += [self.means_model.errors(y_t)] #variance parameter is not required to calculate errors
+
+            # update states_ & epsilons_ if included
+            if self.p > 0:
+                states = np.append(states[1:], states_[-1])
+            if self.q > 0:
+                epsilons = np.append(epsilons[1:], epsilons_[-1])
+        
+        if return_errors:
+            return (states_, epsilons_)
+        else:
+            return states_
+        
+    def _variance_gradients(self, y):
+        '''Returns a numpy array with recursively calculated state
+        variable gradients.
+        '''
+        # build data matrix Z
+        Z = np.ones([len(y), 1])
+        for arch in range(1, 1+self.q):
+            Z = np.concatenate(
+                    [Z,
+                     np.array([self.steady_state]*arch+[e**2 for e in self.epsilons_][:-arch]).reshape(-1, 1),
+                    ], axis=1
+                )
+        for garch in range(1, 1+self.p):
+            Z = np.concatenate(
+                    [Z,
+                     np.array([self.steady_state]*garch+self.states_[:-garch]).reshape(-1, 1),
+                    ], axis=1
+                )
+
+        # steady state gradient
+        denominator = 1 - sum(self.alphas + self.betas)
+        steady_state_gradient = np.concatenate(
+                                    [
+                                    np.array([[1/denominator]]),
+                                    np.full([1, self.p+self.q], self.omega/denominator**2)
+                                    ], axis=1
+                                )
+        
+        # recursively calculate gradients
+        betas = np.array(self.betas).reshape(-1, 1)
+        lagged_gradients = np.repeat(steady_state_gradient, repeats=self.p, axis=0)
+        variance_gradients = np.empty(Z.shape)
+        for row, z_t in enumerate(Z):
+            gradient_t = z_t + betas.T@lagged_gradients
+            variance_gradients[row] = gradient_t
+            if self.p > 0:
+                lagged_gradients = np.concatenate(
+                                        [
+                                        gradient_t,
+                                        lagged_gradients[:-1],
+                                        ], axis=0
+                                    )#[:-self.p]      
+            
+        return variance_gradients
+    
+    def _initialise_parameters(self, y, X, weights):
+        '''Fixes initial parameter values to start estimation.'''
+        # update means model
+        self.means_model.step(y=y, X=None, weights=weights)
+        self.epsilons_ = self.means_model.errors(y)
+        
+        # initialise state equation parameters with ARCH regression (OLS)
+        if sum(self.alphas + self.betas)==0:
+            _X = np.concatenate(
+                    [np.ones([len(y-self.q),1]),
+                     np.array([np.roll(self.epsilons_, arch)**2 for arch in range(1, self.q+1)]).reshape(-1, 1)
+                    ], axis=1)
+            _y = np.array(self.epsilons_).reshape(-1, 1)**2
+            _init = np.linalg.inv(_X.T@_X) @ _X.T@_y
+            self.omega = _init[0][0]
+            self.alphas = _init[1:].flatten().tolist()
+            self.betas = [0]*self.p
+            
+        # fix intercept
+        if self.omega <= 0:
+            self.omega = self.means_model.var() * (1-sum(self.alphas+self.betas))
+            
+    def _e_step(self, y, X, weights):
+        '''Updates the state variable given the model parameters.'''
+        self.states_ = self.filter_states(y, X=None, warm_start=False, return_errors=False)
+        self.state = self.states_[-1]
+        
+    def _m_step(self, y, X, weights, learning_rate=None):
+        '''Updates the model parameters given the state variable.'''
+        # update state equation parameters using the scoring method
+        _W = (1/2**0.5) * self._variance_gradients(y) / np.array(self.states_).reshape(-1, 1)
+        _v = (1/2**0.5) * (np.array(self.epsilons_)**2/np.array(self.states_)-1).reshape(-1, 1)
+        delta_ = (np.linalg.inv(_W.T@_W) @ _W.T@_v)
+        
+        # update state equation parameters
+        if learning_rate is None:
+            learning_rate = 0.2-0.15/(self.iteration+1)**1 # learning rate converges to 0.2
+        state_params_ = self.param_vector + learning_rate*delta_
+        if abs(state_params_[1:].sum()) > 1:
+            raise ValueError('encountered nonstationary parameters during iteration')
+        self.omega = state_params_.squeeze()[0]
+        self.alphas = state_params_.squeeze()[1:1+self.q]
+        self.betas = state_params_.squeeze()[1+self.q:1+self.q+self.p]
+        
+        # update means model
+        w_ = weights / np.array(self.states_)
+        self.means_model.step(y=y, X=None, weights=w_)
+        self.epsilons_ = self.means_model.errors(y)
+    
+    def _step(self, y, X, weights, learning_rate=None):
+        '''Performs one estimation step.
+        Recalculates the latent variables and the model parameters.
+        '''
+        # initialise
+        if self.iteration == 0:
+            self._initialise_parameters(y=y, X=X, weights=weights)
+        
+        # state filter
+        self._e_step(y=y, X=X, weights=weights)
+        
+        # parameter update
+        self._m_step(y=y, X=X, weights=weights, learning_rate=learning_rate)
+        
+    def score(self, y, X=None, weights=None, warm_start=False):
+        '''Returns the log-likelihood of a sample.
+        The state variable is filtered given the model paramters to perform the calculations.
+        '''
+        # filter state sequence
+        states_ = self.filter_states(y, X=X, warm_start=warm_start)
+        
+        # weights
+        if weights is None:
+            weights = np.ones(y.shape)
+        else:
+            weights = np.array(weights)
+
+        # score
+        score = (weights * np.log(self.means_model.pdf(y, scale=np.array(states_)**0.5))).sum()
+        return score
