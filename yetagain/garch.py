@@ -221,17 +221,18 @@ class GARCHModel(ModelMixin, EstimationMixin):
         '''Returns arrays of lagged states and errors.'''
         # warm start case
         if warm_start:
-            assert self.is_fitted, \
-                'model is not fitted'
-            states = self.states_[-self.p:]
-            epsilons = self.epsilons_[-self.q:]
-        
+            assert self.state is not None, \
+                'warm start requires the model to have state'
+            if self.is_fitted: #if model has state history
+                states = self.states_[-self.p:]
+                epsilons = self.epsilons_[-self.q:]
+            else: # if model has state but not state history
+                states = np.append(np.full(max(0, self.p-1), self.steady_state), self.state)
+                epsilons = np.full(max(0, self.q), self.steady_state**0.5)
+                
         # start from steady state case
         else:
-            if self.state:
-                states = np.append(np.full(max(0, self.p-1), self.steady_state), self.state)
-            else:
-                states = np.full(max(0, self.p), self.steady_state)
+            states = np.full(max(0, self.p), self.steady_state)
             epsilons = np.full(max(0, self.q), self.steady_state**0.5)
         
         # return empty arrays if order zero
@@ -241,10 +242,17 @@ class GARCHModel(ModelMixin, EstimationMixin):
             epsilons = np.array([])
         return (states, epsilons)
         
-    def filter_states(self, y, X=None, warm_start=False, return_errors=False):
+    def filter_states(self, y, X=None, weights=None, warm_start=False, return_errors=False):
         '''Filters the variance states from a given series.'''
+        # prepare importance weights
+        if weights is None:
+            weights = np.ones(np.array(y).shape)
+        else:
+            weights = np.array(weights)
+        weights = weights/weights.mean()
+        
         # get previous states
-        states, epsilons = self._start_recursion(warm_start=warm_start)
+        lagged_states, lagged_epsilons = self._start_recursion(warm_start=warm_start)
         
         # set up storage arrays
         if warm_start:
@@ -255,31 +263,32 @@ class GARCHModel(ModelMixin, EstimationMixin):
             epsilons_ = []
             
         # recursive filter
-        for y_t in y:
-            states_ += [self.omega + np.flip(self.betas)@states + np.flip(self.alphas)@epsilons**2]
+        for y_t, w_t in zip(y, weights):
+            states_ += [self.omega + np.flip(self.betas)@lagged_states + np.flip(self.alphas)@lagged_epsilons**2]
             epsilons_ += [self.means_model.errors(y_t)] #variance parameter is not required to calculate errors
 
             # update states_ & epsilons_ if included
             if self.p > 0:
-                states = np.append(states[1:], states_[-1])
+                lagged_states = np.append(lagged_states[1:], states_[-1])
             if self.q > 0:
-                epsilons = np.append(epsilons[1:], epsilons_[-1])
+                lagged_epsilons = np.append(lagged_epsilons[1:], w_t*abs(epsilons_[-1])+(1-w_t)*states_[-1]**0.5)
         
         if return_errors:
             return (states_, epsilons_)
         else:
             return states_
         
-    def _variance_gradients(self, y):
+    def _variance_gradients(self, y, X, weights):
         '''Returns a numpy array with recursively calculated state
         variable gradients.
         '''
         # build data matrix Z
         Z = np.ones([len(y), 1])
+        weighted_epsilons = weights*self.epsilons_**2 + (1-weights)*self.states_ #weighted average of squared error and its expectation
         for arch in range(1, 1+self.q):
             Z = np.concatenate(
                     [Z,
-                     np.array([self.steady_state]*arch+[e**2 for e in self.epsilons_][:-arch]).reshape(-1, 1),
+                     np.array([self.steady_state]*arch+weighted_epsilons.tolist()[:-arch]).reshape(-1, 1),
                     ], axis=1
                 )
         for garch in range(1, 1+self.p):
@@ -299,11 +308,12 @@ class GARCHModel(ModelMixin, EstimationMixin):
                                 )
         
         # recursively calculate gradients
+        alphas = np.array(self.alphas).reshape(-1, 1)
         betas = np.array(self.betas).reshape(-1, 1)
         lagged_gradients = np.repeat(steady_state_gradient, repeats=self.p, axis=0)
         variance_gradients = np.empty(Z.shape)
-        for row, z_t in enumerate(Z):
-            gradient_t = z_t + betas.T@lagged_gradients
+        for row, (z_t, lagged_weights) in enumerate(zip(Z, weights)):
+            gradient_t = z_t + betas.T@lagged_gradients + (alphas*lagged_weights).T@lagged_gradients
             variance_gradients[row] = gradient_t
             if self.p > 0:
                 lagged_gradients = np.concatenate(
@@ -311,8 +321,8 @@ class GARCHModel(ModelMixin, EstimationMixin):
                                         gradient_t,
                                         lagged_gradients[:-1],
                                         ], axis=0
-                                    )#[:-self.p]      
-            
+                                    ) 
+        
         return variance_gradients
     
     def _initialise_parameters(self, y, X, weights):
@@ -323,14 +333,15 @@ class GARCHModel(ModelMixin, EstimationMixin):
         
         # initialise state equation parameters with ARCH regression (OLS)
         if sum(self.alphas + self.betas)==0:
-            _X = np.concatenate(
+            X = np.concatenate(
                     [np.ones([len(y-self.q),1]),
                      np.array([np.roll(self.epsilons_, arch)**2 for arch in range(1, self.q+1)]).reshape(-1, 1)
                     ], axis=1)
-            _y = np.array(self.epsilons_).reshape(-1, 1)**2
-            _init = np.linalg.inv(_X.T@_X) @ _X.T@_y
-            self.omega = _init[0][0]
-            self.alphas = _init[1:].flatten().tolist()
+            y = np.array(self.epsilons_).reshape(-1, 1)**2
+            omega_inv = sp.sparse.diags(weights)
+            init_ = np.linalg.inv(X.T@omega_inv@X) @ X.T@omega_inv@y
+            self.omega = init_[0][0]
+            self.alphas = init_[1:].flatten().tolist()
             self.betas = [0]*self.p
             
         # fix intercept
@@ -339,20 +350,22 @@ class GARCHModel(ModelMixin, EstimationMixin):
             
     def _e_step(self, y, X, weights):
         '''Updates the state variable given the model parameters.'''
-        self.states_ = self.filter_states(y, X=None, warm_start=False, return_errors=False)
+        self.states_ = self.filter_states(y, X=X, weights=weights, warm_start=False, return_errors=False)
         self.state = self.states_[-1]
         
     def _m_step(self, y, X, weights, learning_rate=None):
         '''Updates the model parameters given the state variable.'''
         # update state equation parameters using the scoring method
-        _W = (1/2**0.5) * self._variance_gradients(y) / np.array(self.states_).reshape(-1, 1)
-        _v = (1/2**0.5) * (np.array(self.epsilons_)**2/np.array(self.states_)-1).reshape(-1, 1)
-        delta_ = (np.linalg.inv(_W.T@_W) @ _W.T@_v)
+        W = (1/2**0.5) * self._variance_gradients(y=y, X=X, weights=weights) / np.array(self.states_).reshape(-1, 1)
+        weighted_epsilons = weights*self.epsilons_**2 + (1-weights)*self.states_
+        v = (1/2**0.5) * (weighted_epsilons/np.array(self.states_)-1).reshape(-1, 1)
+        omega_inv = sp.sparse.diags(weights)
+        delta_ = (np.linalg.inv(W.T@omega_inv@W) @ W.T@omega_inv@v)
         
         # update state equation parameters
         if learning_rate is None:
             learning_rate = 0.2-0.15/(self.iteration+1)**1 # learning rate converges to 0.2
-        state_params_ = self.param_vector + learning_rate*delta_
+        state_params_ = model.param_vector + learning_rate*delta_
         if abs(state_params_[1:].sum()) > 1:
             raise ValueError('encountered nonstationary parameters during iteration')
         self.omega = state_params_.squeeze()[0]
@@ -381,15 +394,15 @@ class GARCHModel(ModelMixin, EstimationMixin):
     def score(self, y, X=None, weights=None, warm_start=False):
         '''Returns the log-likelihood of a sample.
         The state variable is filtered given the model paramters to perform the calculations.
-        '''
-        # filter state sequence
-        states_ = self.filter_states(y, X=X, warm_start=warm_start)
-        
+        '''        
         # weights
         if weights is None:
             weights = np.ones(y.shape)
         else:
             weights = np.array(weights)
+            
+        # filter state sequence
+        states_ = self.filter_states(y=y, X=X, weights=weights, warm_start=warm_start)
 
         # score
         score = (weights * np.log(self.means_model.pdf(y, scale=np.array(states_)**0.5))).sum()
