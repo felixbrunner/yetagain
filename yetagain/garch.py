@@ -20,7 +20,7 @@ class GARCHModel(ModelMixin, EstimationMixin):
         self.betas = betas
         self.state = state
         ModelMixin.__init__(self)
-        
+
     @property
     def p(self):
         '''The order of GARCH (AR) terms.'''
@@ -165,7 +165,7 @@ class GARCHModel(ModelMixin, EstimationMixin):
         '''
         raise NotImplementedError('unconditional kurtosis not implemented')
         
-    def draw(self, size=1, return_variances=False, return_distributions=False):
+    def draw(self, size=1, return_distributions=False):
         '''Draw a random sequence of specified length.'''
         # set up
         if self.is_fitted:
@@ -173,31 +173,25 @@ class GARCHModel(ModelMixin, EstimationMixin):
         else:
             states, epsilons = self._start_recursion(warm_start=False)
         means_model = self.means_model.copy()
-        variances = []
         distributions = []
         sample = []
         
         for step in range(size):
             # draw
-            variances += [self.omega + np.flip(self.betas)@states + np.flip(self.alphas)@epsilons**2]
-            means_model.set_variance(variances[-1])
+            variance = self.omega + np.flip(self.betas)@states + np.flip(self.alphas)@epsilons**2
+            means_model.set_variance(variance)
             distributions += [means_model.distribution.copy()]
             sample += [means_model.draw()]
             
             # update states & epsilons
-            states = np.append(states[1:], variances[-1])
+            states = np.append(states[1:], variance)
             epsilons = np.append(epsilons[1:], means_model.errors(sample[-1]))
         
         if size is 1:
             sample = sample[0]
-            variances = variances[0]
             distributions = distributions[0]
 
-        if return_variances and return_distributions:
-            return (sample, variances, distributions)
-        elif return_variances:
-            return (sample, variances)
-        elif return_distributions:
+        if return_distributions:
             return (sample, distributions)
         else:
             return sample
@@ -418,3 +412,13 @@ class GARCHModel(ModelMixin, EstimationMixin):
         # score
         score = (weights * np.log(self.means_model.pdf(y, scale=np.array(states_)**0.5))).sum()
         return score
+
+    @property
+    def distributions_(self):
+        '''Returns a sequence of distributions fitted to the data.'''
+        assert self.is_fitted, \
+            'model is not fitted'
+        distributions_ = copy.deepcopy(self.means_model.distributions_)
+        for state_, distribution_ in zip(self.states_, distributions_):
+            distribution_.set_variance(state_)
+        return distributions_
