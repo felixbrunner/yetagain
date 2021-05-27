@@ -13,7 +13,7 @@ from yetagain.estimation import EstimationMixin
 class GARCHModel(ModelMixin, EstimationMixin):
     '''Generalised Auto-Regressive Conditional Heteroskedasticity model class.'''
     
-    def __init__(self, means_model=NormalModel(), omega=0, alphas=[0], betas=[0], state=None):
+    def __init__(self, means_model=NormalModel(), omega=1, alphas=[0], betas=[0], state=None):
         self.means_model = means_model
         self.omega = omega
         self.alphas = alphas
@@ -58,6 +58,8 @@ class GARCHModel(ModelMixin, EstimationMixin):
     def omega(self, omega):
         assert type(omega) in [int, float, np.float64], \
             'omega needs to be numeric'
+        assert omega > 0, \
+            'omega needs to be postive'
         self._omega = omega
         
     @property
@@ -157,11 +159,13 @@ class GARCHModel(ModelMixin, EstimationMixin):
         self.state = self.steady_state
         
     @property
-    def steady_state_kurtosis(self):
-        ''''''
+    def unconditional_kurtosis(self):
+        ''' see "Analysis of Financial Time Series" (2010) textbook,
+        section 3.16, p. 165.
+        '''
         raise NotImplementedError('unconditional kurtosis not implemented')
         
-    def draw(self, size=1, return_variances=False):
+    def draw(self, size=1, return_variances=False, return_distributions=False):
         '''Draw a random sequence of specified length.'''
         # set up
         if self.is_fitted:
@@ -170,12 +174,14 @@ class GARCHModel(ModelMixin, EstimationMixin):
             states, epsilons = self._start_recursion(warm_start=False)
         means_model = self.means_model.copy()
         variances = []
+        distributions = []
         sample = []
         
         for step in range(size):
             # draw
             variances += [self.omega + np.flip(self.betas)@states + np.flip(self.alphas)@epsilons**2]
             means_model.set_variance(variances[-1])
+            distributions += [means_model.distribution.copy()]
             sample += [means_model.draw()]
             
             # update states & epsilons
@@ -185,9 +191,14 @@ class GARCHModel(ModelMixin, EstimationMixin):
         if size is 1:
             sample = sample[0]
             variances = variances[0]
-            
-        if return_variances:
+            distributions = distributions[0]
+
+        if return_variances and return_distributions:
+            return (sample, variances, distributions)
+        elif return_variances:
             return (sample, variances)
+        elif return_distributions:
+            return (sample, distributions)
         else:
             return sample
         
@@ -365,7 +376,7 @@ class GARCHModel(ModelMixin, EstimationMixin):
         # update state equation parameters
         if learning_rate is None:
             learning_rate = 0.2-0.15/(self.iteration+1)**1 # learning rate converges to 0.2
-        state_params_ = model.param_vector + learning_rate*delta_
+        state_params_ = self.param_vector + learning_rate*delta_
         if abs(state_params_[1:].sum()) > 1:
             raise ValueError('encountered nonstationary parameters during iteration')
         self.omega = state_params_.squeeze()[0]
