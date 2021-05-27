@@ -21,7 +21,7 @@ class ModelMixin:
 
     def squared_errors(self, y, method='mean'):
         '''Returns errors made by the model when predicting input data.'''
-        squared_errors = self.errors(y, method='mean')**2
+        squared_errors = self.errors(y, method=method)**2
         return squared_errors
 
     def iterate(self, steps=1):
@@ -50,6 +50,21 @@ class ModelMixin:
         else:
             raise NotImplementedError('Prediction method not implemented')
         return predictions
+
+    def draw(self, size=1, return_distributions=False):
+        '''Draw a random sequence of specified length.'''
+        # draw sample from distribution
+        sample = self.distribution.draw(size=size)
+
+        # return sequence of distributions if required
+        if return_distributions:
+            if size is 1:
+                distributions = self.distribution.copy()
+            else:
+                distributions = [self.distribution.copy() for i in range(size)]
+            return (sample, distributions)
+        else:
+            return sample
 
 
 class NormalModel(ModelMixin, EstimationMixin, NormalDistribution):
@@ -85,16 +100,15 @@ class NormalModel(ModelMixin, EstimationMixin, NormalDistribution):
         '''
         # estimate mean
         mean = np.average(y, weights=weights)
+        self.mu = float(mean)
         
         # estimate variance
-        errors = (y-mean)**2
+        errors = self.squared_errors(y)
         variance = np.average(errors, weights=weights)
-            
-        # set attributes
-        self.mu = float(mean)
         self.sigma = float(np.sqrt(variance))
+            
+        # set status
         self.converged = True
-
 
     @property
     def distribution(self):
@@ -103,7 +117,6 @@ class NormalModel(ModelMixin, EstimationMixin, NormalDistribution):
         '''
         norm = NormalDistribution(mu=self.mu, sigma=self.sigma)
         return norm
-    
 
     def __str__(self):
         '''Returns a summarizing string.'''
@@ -140,7 +153,6 @@ class StudentTModel(ModelMixin, EstimationMixin, StudentTDistribution):
         for k, v in params.items():
             setattr(self, k, v)
 
-            
     def _e_step(self, y):
         '''Performs the expectation step to update estimation weights.'''
         # intialise the EM algorithm with the equally weighted scipy implementation
@@ -171,7 +183,6 @@ class StudentTModel(ModelMixin, EstimationMixin, StudentTDistribution):
         '''
         self._e_step(y)
         self._m_step(y, weights)
-        
     
     @property
     def distribution(self):
@@ -180,7 +191,6 @@ class StudentTModel(ModelMixin, EstimationMixin, StudentTDistribution):
         '''
         distribution = StudentTDistribution(mu=self.mu, sigma=self.sigma, df=self.df)
         return distribution
-
 
     def __str__(self):
         '''Returns a summarizing string.'''
@@ -198,12 +208,10 @@ class MixtureModel(ModelMixin, MixtureDistribution):
         ### use EM algorithm
         raise NotImplementedError('fit method not implemented')
 
-    
     @property
     def distribution(self):
         raise NotImplementedError('distribution not implemented')
         
-
     def __str__(self):
         '''Returns a summarizing string'''
         string = 'MixtureModel(\n'
