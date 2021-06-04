@@ -55,13 +55,14 @@ class DistributionMixin:
 
     def score(self, y, X=None, weights=None):
         '''Returns the (weighted) log-likelihood of a sample.'''
-
+        # weights
         if weights is None:
-            weights = np.ones(y.shape)
+            weights = np.ones(np.array(y).shape)
         else:
             weights = np.array(weights)
 
-        score = (weights * np.log(self.pdf(y))).sum()
+        # score likelihoods
+        score = (weights * np.log(self.likelihood(y=y, X=X))).sum()
         return score
 
     def copy(self):
@@ -162,31 +163,19 @@ class NormalDistribution(DistributionMixin):
         '''Returns the median of the distribution.'''
         return self.mu
     
-    def pdf(self, x, loc=None, scale=None):
+    def pdf(self, x):
         '''Returns the probability density function value for input numbers.'''
-        if loc is None:
-            loc = self.mu
-        if scale is None:
-            scale = self.sigma
-        fx = sp.stats.norm.pdf(x, loc=loc, scale=scale)
+        fx = sp.stats.norm.pdf(x, loc=self.mu, scale=self.sigma)
         return fx
     
-    def cdf(self, x, loc=None, scale=None):
+    def cdf(self, x):
         '''Returns the cumulative density function value for input numbers.'''
-        if loc is None:
-            loc = self.mu
-        if scale is None:
-            scale = self.sigma
-        Fx = sp.stats.norm.cdf(x, loc=loc, scale=scale)
+        Fx = sp.stats.norm.cdf(x, loc=self.mu, scale=self.sigma)
         return Fx
     
-    def draw(self, size=1, loc=None, scale=None):
+    def draw(self, size=1):
         '''Draws random numbers from the distribution.'''
-        if loc is None:
-            loc = self.mu
-        if scale is None:
-            scale = self.sigma
-        sample = sp.stats.norm.rvs(size=size, loc=loc, scale=scale)
+        sample = sp.stats.norm.rvs(size=size, loc=self.mu, scale=self.sigma)
         if size == 1:
             sample = sample[0]
         return sample
@@ -203,7 +192,7 @@ class StudentTDistribution(DistributionMixin):
     If no parameters are specified, a standard normal distribution.
     '''
     
-    def __init__(self, df, mu=0, sigma=1):
+    def __init__(self, mu=0, sigma=1, df=np.inf):
         self.mu = mu
         self.sigma = sigma
         self.df = df
@@ -304,37 +293,20 @@ class StudentTDistribution(DistributionMixin):
         '''Returns the median of the distribution.'''
         return self.mu
 
-    def pdf(self, x, loc=None, scale=None, df=None):
+    def pdf(self, x):
         '''Returns the probability density function value for input numbers.'''
-        if loc is None:
-            loc = self.mu
-        if scale is None:
-            scale = self.sigma
-        if df is None:
-            df = self.df
-        y = sp.stats.t.pdf(x, loc=loc, scale=scale, df=df)
+        y = sp.stats.t.pdf(x, loc=self.mu, scale=self.sigma, df=self.df)
         return y
 
-    def cdf(self, x, loc=None, scale=None, df=None):
+    def cdf(self, x):
         '''Returns the cumulative density function value for input numbers.'''
-        if loc is None:
-            loc = self.mu
-        if scale is None:
-            scale = self.sigma
-        if df is None:
-            df = self.df
-        y = sp.stats.t.cdf(x, loc=loc, scale=scale, df=df)
+        y = sp.stats.t.cdf(x, loc=self.mu, scale=self.sigma, df=self.df)
         return y
 
-    def draw(self, size=1, loc=None, scale=None, df=None):
+    def draw(self, size=1):
         '''Draws random numbers from the distribution.'''
-        if loc is None:
-            loc=self.mu
-        if scale is None:
-            scale=self.sigma
-        if df is None:
-            df=self.df
-        sample = sp.stats.t.rvs(size=size, loc=loc, scale=scale, df=df)
+        sample = sp.stats.t.rvs(size=size, loc=self.mu,
+                                scale=self.sigma, df=self.df)
         if size == 1:
             sample = sample[0]
         return sample
