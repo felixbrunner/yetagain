@@ -11,20 +11,22 @@ import copy
 class DistributionMixin:
     '''Mixin class for distributions.'''
 
+    @property
     def std(self):
         '''Returns the distribution standard deviation.'''
-        return self.var()**0.5
+        return self.var**0.5
 
+    @property
     def exkurt(self):
         '''Returns the excess kurtosis.'''
-        return self.kurt()-3
+        return self.kurt - 3
 
     def mvsk(self):
         '''Returns the first four standardised moments about the mean.'''
-        m = self.mean()
-        v = self.var()
-        s = self.skew()
-        k = self.kurt()
+        m = self.mean
+        v = self.var
+        s = self.skew
+        k = self.kurt
         return (m, v, s, k)
 
     def standardised_moment(self, moment):
@@ -46,12 +48,12 @@ class DistributionMixin:
             excess_moment = standardised_moment - bias
         return excess_moment
 
-    def likelihoods(self, y, X=None, latent=None):
+    def likelihood(self, y, X=None):
         '''Returns the likelihoods of the observations in a sample.'''
-        likelihoods = self.pdf(y)
-        return likelihoods
+        likelihood = self.pdf(y)
+        return likelihood
 
-    def score(self, y, X=None, weights=None, latent=None):
+    def score(self, y, X=None, weights=None):
         '''Returns the (weighted) log-likelihood of a sample.'''
 
         if weights is None:
@@ -80,8 +82,7 @@ class NormalDistribution(DistributionMixin):
     def __init__(self, mu=0, sigma=1):
         self.mu = mu
         self.sigma = sigma
-        
-        
+
     @property
     def mu(self):
         '''The distribution mean.'''
@@ -91,8 +92,7 @@ class NormalDistribution(DistributionMixin):
     def mu(self, mu):
         assert type(mu) in [int, float, np.float64], \
             'mu needs to be numeric'
-        self._mu = mu
-        
+        self._mu = mu        
         
     @property
     def sigma(self):
@@ -104,12 +104,6 @@ class NormalDistribution(DistributionMixin):
         assert type(sigma) in [int, float, np.float64], \
             'sigma needs to be numeric'
         self._sigma = sigma
-
-    def set_variance(self, variance):
-        assert variance > 0, \
-            'variance needs to be a positive number'
-        self.sigma = np.sqrt(variance)
-    
     
     def central_moment(self, moment):
         '''Returns the central moments of input order.'''
@@ -125,38 +119,74 @@ class NormalDistribution(DistributionMixin):
             central_moment = self.sigma**moment * sp.special.factorialk(moment-1, 2)
         return central_moment
     
+    @property
     def mean(self):
         '''Returns the distribution mean.'''
         return self.mu
-    
+
+    @mean.setter
+    def mean(self, new_mean):
+        self.mu = new_mean
+
+    @property
     def var(self):
         '''Returns the distribution variance.'''
         var = self.sigma**2
         return var
-    
+
+    @var.setter
+    def var(self, new_var):
+        assert new_var > 0, \
+            'new_var needs to be a positive number'
+        self.sigma = new_var**0.5
+
+    @property
     def skew(self):
         '''Returns the distribution skewness.'''
         skew = self.standardised_moment(3)
         return skew
     
+    @property
     def kurt(self):
         '''Returns the distribution kurtosis.'''
         kurt = self.standardised_moment(4)
         return kurt
+
+    @property
+    def mode(self):
+        '''Returns the mode of the distribution.'''
+        return self.mu
+
+    @property
+    def median(self):
+        '''Returns the median of the distribution.'''
+        return self.mu
     
-    def pdf(self, x):
+    def pdf(self, x, loc=None, scale=None):
         '''Returns the probability density function value for input numbers.'''
-        fx = sp.stats.norm(loc=self.mu, scale=self.sigma).pdf(x)
+        if loc is None:
+            loc = self.mu
+        if scale is None:
+            scale = self.sigma
+        fx = sp.stats.norm.pdf(x, loc=loc, scale=scale)
         return fx
     
-    def cdf(self, x):
+    def cdf(self, x, loc=None, scale=None):
         '''Returns the cumulative density function value for input numbers.'''
-        Fx = sp.stats.norm(loc=self.mu, scale=self.sigma).cdf(x)
+        if loc is None:
+            loc = self.mu
+        if scale is None:
+            scale = self.sigma
+        Fx = sp.stats.norm.cdf(x, loc=loc, scale=scale)
         return Fx
     
-    def draw(self, size=1):
+    def draw(self, size=1, loc=None, scale=None):
         '''Draws random numbers from the distribution.'''
-        sample = sp.stats.norm(loc=self.mu, scale=self.sigma).rvs(size=size)
+        if loc is None:
+            loc = self.mu
+        if scale is None:
+            scale = self.sigma
+        sample = sp.stats.norm.rvs(size=size, loc=loc, scale=scale)
         if size == 1:
             sample = sample[0]
         return sample
@@ -178,7 +208,6 @@ class StudentTDistribution(DistributionMixin):
         self.sigma = sigma
         self.df = df
 
-
     @property
     def mu(self):
         '''The distribution mean.'''
@@ -190,7 +219,6 @@ class StudentTDistribution(DistributionMixin):
             'mu needs to be numeric'
         self._mu = mu
 
-
     @property
     def sigma(self):
         '''The distribution standard deviation.'''
@@ -201,7 +229,6 @@ class StudentTDistribution(DistributionMixin):
         assert type(sigma) in [int, float, np.float64], \
             'sigma needs to be numeric'
         self._sigma = sigma
-
 
     @property
     def df(self):
@@ -216,11 +243,6 @@ class StudentTDistribution(DistributionMixin):
             'df needs to be a postive number'
         self._df = df
 
-    def set_variance(self, variance):
-        assert variance > 0, \
-            'variance needs to be a positive number'
-        self.sigma = np.sqrt(variance * (self.df-2) / self.df)
-        
     def central_moment(self, moment):
         '''Returns the central moments of input order.'''
         
@@ -237,40 +259,82 @@ class StudentTDistribution(DistributionMixin):
             central_moment = sp.special.gamma((moment+1)/2) /np.sqrt(np.pi) * self.df**(moment/2) / (self.df/2-np.arange(1, (moment/2)+1)).prod()
         return central_moment
     
+    @property
     def mean(self):
         '''Returns the distribution mean.'''
         return self.mu
+
+    @mean.setter
+    def mean(self, new_mean):
+        self.mu = new_mean
     
+    @property
     def var(self):
         '''Returns the distribution variance.'''
         assert self.df > 2, \
             'Variance does not exist for distribution with {} degrees of freedom.'.format(round(self.df, 4))
         var = self.sigma**2 * (self.df/(self.df-2))
         return var
-    
+
+    @var.setter
+    def var(self, new_var):
+        assert new_var > 0, \
+            'variance needs to be a positive number'
+        self.sigma = (new_var * (self.df-2) / self.df)**0.5
+
+    @property
     def skew(self):
         '''Returns the distribution skewness.'''
         skew = self.standardised_moment(3)
         return skew
 
+    @property
     def kurt(self):
         '''Returns the distribution kurtosis.'''
         kurt = self.standardised_moment(4)
         return kurt
 
-    def pdf(self, x):
+    @property
+    def mode(self):
+        '''Returns the mode of the distribution.'''
+        return self.mu
+
+    @property
+    def median(self):
+        '''Returns the median of the distribution.'''
+        return self.mu
+
+    def pdf(self, x, loc=None, scale=None, df=None):
         '''Returns the probability density function value for input numbers.'''
-        y = sp.stats.t(loc=self.mu, scale=self.sigma, df=self.df).pdf(x)
+        if loc is None:
+            loc = self.mu
+        if scale is None:
+            scale = self.sigma
+        if df is None:
+            df = self.df
+        y = sp.stats.t.pdf(x, loc=loc, scale=scale, df=df)
         return y
 
-    def cdf(self, x):
+    def cdf(self, x, loc=None, scale=None, df=None):
         '''Returns the cumulative density function value for input numbers.'''
-        y = sp.stats.t(loc=self.mu, scale=self.sigma, df=self.df).cdf(x)
+        if loc is None:
+            loc = self.mu
+        if scale is None:
+            scale = self.sigma
+        if df is None:
+            df = self.df
+        y = sp.stats.t.cdf(x, loc=loc, scale=scale, df=df)
         return y
 
-    def draw(self, size=1):
+    def draw(self, size=1, loc=None, scale=None, df=None):
         '''Draws random numbers from the distribution.'''
-        sample = sp.stats.t(loc=self.mu, scale=self.sigma, df=self.df).rvs(size=size)
+        if loc is None:
+            loc=self.mu
+        if scale is None:
+            scale=self.sigma
+        if df is None:
+            df=self.df
+        sample = sp.stats.t.rvs(size=size, loc=loc, scale=scale, df=df)
         if size == 1:
             sample = sample[0]
         return sample
@@ -290,7 +354,6 @@ class MixtureDistribution(DistributionMixin):
     def __init__(self, components=None):
         self.components = components
         
-    
     def _check_component(self, component):
         '''Checks component inputs.'''
         dist, weight = component
@@ -315,13 +378,11 @@ class MixtureDistribution(DistributionMixin):
             self._check_component(component)
         self._components = components
         
-        
     @property
     def distributions(self):
         '''Returns a list of component distributions.'''
         distributions = [component[0] for component in self.components]
         return distributions
-        
         
     @property
     def weights(self):
@@ -329,12 +390,10 @@ class MixtureDistribution(DistributionMixin):
         weights = [component[1] for component in self.components]
         return weights
     
-    
     @property
     def n_components(self):
         '''Returns the number of components.'''
         return len(self.components)
-    
     
     def add_component(self, distribution, weight):
         '''Adds a component to the mixture distribution.
@@ -343,11 +402,16 @@ class MixtureDistribution(DistributionMixin):
         component = (distribution, weight)
         self._check_component(component)
         self.components = self.components + [component]
-        
+    
+    @property
     def mean(self):        
         '''Returns the mean.'''
-        mean = sum([component.mean()*weight for (component, weight) in self.components])
+        mean = sum([component.mean*weight for (component, weight) in self.components])
         return mean
+
+    @mean.setter
+    def mean(self, new_mean):
+        raise NotImplementedError('mean setting not implemented')
     
     def central_moment(self, moment):
         '''Returns the central moment of input order.'''
@@ -359,7 +423,7 @@ class MixtureDistribution(DistributionMixin):
             return 0
         else:
             mean = self.mean()
-            inputs = [(component.mean(), component.std(), weight) for (component, weight) in self.components]
+            inputs = [(component.mean, component.std, weight) for (component, weight) in self.components]
             central_moment = 0
             for (m, s, w) in inputs:
                 for k in range(moment+1):
@@ -367,17 +431,34 @@ class MixtureDistribution(DistributionMixin):
                     central_moment += w * product
             return central_moment
     
+    @property
     def var(self):
         '''Returns the distribution variance.'''
         return self.central_moment(2)
 
+    @property
     def skew(self):
         '''Returns the distribution skewness.'''
         return self.standardised_moment(3)
 
+    @property
     def kurt(self):
         '''Returns the distribution kurtosis.'''
         return self.standardised_moment(4)
+
+    @property
+    def mode(self):
+        '''Returns the mode of the distribution.'''
+        pdfs = [self.pdf(comp_mode) for comp_mode in self.component_modes]
+        mode = self.component_modes[np.argmax(pdfs)]
+        return mode
+
+        # raise NotImplementedError('MixtureDistribution mode not implemented')
+
+    @property
+    def median(self):
+        '''Returns the median of the distribution.'''
+        raise NotImplementedError('MixtureDistribution mode not implemented')
     
     def entropy(self, level='state'):
         '''Returns Shannon's entropy based on logarithms with base n of the n component probabilities.'''
@@ -387,29 +468,37 @@ class MixtureDistribution(DistributionMixin):
             raise NotImplementedError('random variable entropy not implemented')
         return entropy
     
+    @property
     def component_means(self):
         '''Returns a list of component means.'''
-        means = [distribution.mean() for (distribution, weight) in self.components]
+        means = [distribution.mean for (distribution, weight) in self.components]
         return means
     
+    @property
     def component_stds(self):
         '''Returns a list of component standard deviations.'''
-        stds = [distribution.std() for (distribution, weight) in self.components]
-        return stds    
+        stds = [distribution.std for (distribution, weight) in self.components]
+        return stds
+
+    @property
+    def component_modes(self):
+        '''Returns a list of component standard deviations.'''
+        modes = [distribution.mode for (distribution, weight) in self.components]
+        return modes 
     
     def pdf(self, x):
         '''Evaluates the probability density function at x.'''
-        y = np.zeros(np.array(x).shape)
+        fx = np.zeros(np.array(x).shape)
         for (component, weight) in self.components:
-            y += weight*component.pdf(x)
-        return y
+            fx += weight*component.pdf(x)
+        return fx
     
     def cdf(self, x):
         '''Evaluates the cumulative density function at x.'''
-        y = np.zeros(np.array(x).shape)
+        Fx = np.zeros(np.array(x).shape)
         for (component, weight) in self.components:
-            y += weight*component.cdf(x)
-        return y
+            Fx += weight*component.cdf(x)
+        return Fx
 
     def draw(self, size=1, return_states=False):
         '''Draw a random sample from a mixture distribution.'''
@@ -442,12 +531,10 @@ class ProductDistribution(DistributionMixin):
     def __init__(self, factors=None):
         self.factors = factors
         
-        
     def _check_factor(self, factor):
         '''Checks factor inputs.'''
         assert isinstance(factor, DistributionMixin), \
             'unknown factor distribution type'
-
         
     @property
     def factors(self):
@@ -464,12 +551,10 @@ class ProductDistribution(DistributionMixin):
             self._check_factor(factor)
         self._factors = factors
     
-    
     @property
     def n_factors(self):
         '''Returns the number of factors.'''
         return len(self.factors)
-    
     
     def add_factor(self, factor):
         '''Adds a factor to the mixture distribution.
@@ -478,6 +563,7 @@ class ProductDistribution(DistributionMixin):
         self._check_factor(factor)
         self.factors = self.factors + [factor]
 
+    @property
     def mean(self):
         ''' Returns the distribution mean.'''
         prod = 1
@@ -487,6 +573,7 @@ class ProductDistribution(DistributionMixin):
         mean = prod
         return mean
     
+    @property
     def var(self):
         '''Returns the distribution variance.'''
         prod1, prod2 = 1, 1
@@ -497,6 +584,7 @@ class ProductDistribution(DistributionMixin):
         var = prod1 - prod2
         return var
 
+    @property
     def skew(self):
         '''Returns the distribution skewness.'''
         prod1, prod2, prod3 = 1, 1, 1
@@ -509,6 +597,7 @@ class ProductDistribution(DistributionMixin):
         skew = third_central_moment/(self.var()**1.5)
         return skew
 
+    @property
     def kurt(self):
         '''Returns the distribution kurtosis.'''
         prod1, prod2, prod3, prod4 = 1, 1, 1, 1
@@ -522,8 +611,18 @@ class ProductDistribution(DistributionMixin):
         kurt = fourth_central_moment/(self.var()**2)#-3
         return kurt
 
+    @property
+    def mode(self):
+        '''Returns the mode of the distribution.'''
+        raise NotImplementedError('ProductDistribution mode not implemented')
+
+    @property
+    def median(self):
+        '''Returns the median of the distribution.'''
+        raise NotImplementedError('ProductDistribution mode not implemented')
+
     def draw(self, size=1, add_one=False):
-        '''Returns a random sample drawn from a mixture distribution.'''
+        '''Returns a random sample drawn from the product distribution.'''
         sample = np.ones(size)
         if add_one:
             for factor in self.factors:
@@ -535,7 +634,7 @@ class ProductDistribution(DistributionMixin):
 
         if size is 1:
             sample = sample[0]
-            
+        
         return sample
     
     def pdf(self):
