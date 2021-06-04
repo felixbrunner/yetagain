@@ -8,7 +8,7 @@ import copy
 from yetagain.models import ModelMixin, NormalModel
 from yetagain.estimation import EstimationMixin
 
-### CLASSES ###
+### GARCH MODEL CLASS ###
 
 class GARCHModel(ModelMixin, EstimationMixin):
     '''Generalised Auto-Regressive Conditional Heteroskedasticity model class.'''
@@ -92,11 +92,11 @@ class GARCHModel(ModelMixin, EstimationMixin):
         
     @property
     def mu(self):
-        return self.means_model.mean()
+        return self.means_model.mean
         
     @property
     def sigma(self):
-        return self.means_model.std()
+        return self.means_model.std
         
     @property
     def state(self):
@@ -127,7 +127,7 @@ class GARCHModel(ModelMixin, EstimationMixin):
     @state.setter
     def state(self, state):
         if state is None:
-            pass
+            state = self.steady_state
         else:
             assert type(state) in [int, float, np.float64], \
                 'state needs to be numeric'
@@ -145,7 +145,9 @@ class GARCHModel(ModelMixin, EstimationMixin):
     def distribution(self):
         distribution = self.means_model.distribution.copy()
         if self.state:
-            distribution.set_variance(self.state)
+            distribution.var = self.state
+        else:
+            distribution.var = self.steady_state
         return distribution
     
     @property
@@ -179,7 +181,7 @@ class GARCHModel(ModelMixin, EstimationMixin):
         for step in range(size):
             # draw
             variance = self.omega + np.flip(self.betas)@states + np.flip(self.alphas)@epsilons**2
-            means_model.set_variance(variance)
+            means_model.var = variance
             distributions += [means_model.distribution.copy()]
             sample += [means_model.draw()]
             
@@ -201,34 +203,49 @@ class GARCHModel(ModelMixin, EstimationMixin):
         steps should be a positive integer.
         If set_state=True, GARCHModel object is modified in place.
         '''
+        assert steps >= 0, \
+            'backward iteration not possible'
+
         # define past states
-        states, epsilons = self._start_recursion()
+        states, epsilons = self._start_recursion(warm_start=True)
         
         # iterate state
         new_state = self.state
+        new_states_ = []
+        new_epsilons_ = []
         for step in range(steps):
             # draw
-            new_state = self.omega + np.flip(self.betas)@states + np.flip(self.alphas)@epsilons**2
+            new_state = self.omega \
+                        + np.flip(self.betas)@states \
+                        + np.flip(self.alphas)@epsilons**2
             
             # update states & epsilons
             states = np.append(states[1:], new_state)
             epsilons = np.append(epsilons[1:], self.steady_state**0.5)
+            new_states_ += [new_state]
+            new_epsilons_ += [self.steady_state**0.5]
         
         # outputs
         if set_state:
             self.state = new_state
+            if hasattr(self, 'states_'):
+                self.states_ += new_states_
+                self.epsilons_ += new_epsilons_
         else:
             new_garch = self.copy()
             new_garch.state = new_state
+            if hasattr(new_garch, 'states_'):
+                new_garch.states_ += new_states_
+                new_garch.epsilons_ += new_epsilons_
             return new_garch
     
-    def _start_recursion(self, warm_start=False):
+    def _start_recursion(self, warm_start=True):
         '''Returns arrays of lagged states and errors.'''
         # warm start case
         if warm_start:
-            assert self.state is not None, \
-                'warm start requires the model to have state'
-            if self.is_fitted: #if model has state history
+        #     assert self.state is not None, \
+        #         'warm start requires the model to have state'
+            if self.is_fitted: # if model has state history
                 states = self.states_[-self.p:]
                 epsilons = self.epsilons_[-self.q:]
             else: # if model has state but not state history
@@ -247,7 +264,7 @@ class GARCHModel(ModelMixin, EstimationMixin):
             epsilons = np.array([])
         return (states, epsilons)
         
-    def filter_states(self, y, X=None, weights=None, warm_start=False, return_errors=False):
+    def filter(self, y, X=None, weights=None, warm_start=False, return_errors=False):
         '''Filters the variance states from a given series.'''
         # prepare importance weights
         if weights is None:
@@ -272,7 +289,7 @@ class GARCHModel(ModelMixin, EstimationMixin):
             states_ += [self.omega + np.flip(self.betas)@lagged_states + np.flip(self.alphas)@lagged_epsilons**2]
             epsilons_ += [self.means_model.errors(y_t)] #variance parameter is not required to calculate errors
 
-            # update states_ & epsilons_ if included
+            # update states_ & epsilons_ if relevant
             if self.p > 0:
                 lagged_states = np.append(lagged_states[1:], states_[-1])
             if self.q > 0:
@@ -355,7 +372,7 @@ class GARCHModel(ModelMixin, EstimationMixin):
             
     def _e_step(self, y, X, weights):
         '''Updates the state variable given the model parameters.'''
-        self.states_ = self.filter_states(y, X=X, weights=weights, warm_start=False, return_errors=False)
+        self.states_ = self.filter(y, X=X, weights=weights, warm_start=False, return_errors=False)
         self.state = self.states_[-1]
         
     def _m_step(self, y, X, weights, learning_rate=None):
@@ -395,30 +412,38 @@ class GARCHModel(ModelMixin, EstimationMixin):
         
         # parameter update
         self._m_step(y=y, X=X, weights=weights, learning_rate=learning_rate)
-        
-    def score(self, y, X=None, weights=None, warm_start=False):
-        '''Returns the log-likelihood of a sample.
-        The state variable is filtered given the model paramters to perform the calculations.
-        '''        
-        # weights
-        if weights is None:
-            weights = np.ones(y.shape)
+
+    def predict(self, y, X=None, weights=None, filter=False, warm_start=False, method='distribution'):
+        '''Returns an array with predictions for an input sample.'''
+        # predict mean
+        if hasattr(self.means_model, 'filter'):
+            distributions = self.means_model.predict(y=y, X=X, weights=weights,
+                                                     filter=filter,
+                                                     warm_start=warm_start)
         else:
-            weights = np.array(weights)
-            
-        # filter state sequence
-        states_ = self.filter_states(y=y, X=X, weights=weights, warm_start=warm_start)
+            distributions = self.means_model.predict(y=y, X=X)
 
-        # score
-        score = (weights * np.log(self.means_model.pdf(y, scale=np.array(states_)**0.5))).sum()
-        return score
+        # predict variances
+        if filter or not hasattr(self, 'states_'):
+            _states = self.filter(y=y, X=X, weights=weights, warm_start=warm_start)
+        else:
+            _states = self.states_
 
-    @property
-    def distributions_(self):
-        '''Returns a sequence of distributions fitted to the data.'''
-        assert self.is_fitted, \
-            'model is not fitted'
-        distributions_ = copy.deepcopy(self.means_model.distributions_)
-        for state_, distribution_ in zip(self.states_, distributions_):
-            distribution_.set_variance(state_)
-        return distributions_
+        for dist_t, state_t in zip(distributions, _states):
+            dist_t.var = state_t
+
+        # output
+        if method == 'distribution' or method == None:
+            return distributions
+        elif method == 'mean':
+            return [dist.mean for dist in distributions]
+        elif method == 'mode':
+            return [dist.mode for dist in distributions]
+        elif method == 'median':
+            return [dist.median for dist in distributions]
+        elif method == 'var':
+            return [dist.var for dist in distributions]
+        elif method == 'std':
+            return [dist.std for dist in distributions]
+        else:
+            raise NotImplementedError('Prediction method not implemented')
