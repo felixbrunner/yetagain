@@ -14,14 +14,16 @@ class ModelMixin:
     def __init__(self):
         self.is_fitted = False
 
-    def errors(self, y, method='mean'):
+    def errors(self, y, X=None, method='mean'):
         '''Returns errors made by the model when predicting input data.'''
-        errors = y - self.predict(y, X=None, method=method)
+        assert method != 'distribution', \
+            'distribution not an allowed prediction method to calculate errors'
+        errors = y - self.predict(y=y, X=X, method=method)
         return errors
 
-    def squared_errors(self, y, method='mean'):
+    def squared_errors(self, y, X=None, method='mean'):
         '''Returns errors made by the model when predicting input data.'''
-        squared_errors = self.errors(y, method=method)**2
+        squared_errors = self.errors(y=y, X=X, method=method)**2
         return squared_errors
 
     def iterate(self, steps=1):
@@ -42,14 +44,23 @@ class ModelMixin:
             'Model has no fitted parameters.'
         return self.params
 
-    def predict(self, y, X=None, method='mean'):
-        '''Returns an array with predicted values for an input sample.'''
-        y = np.array(y)
-        if method == 'mean':
-            predictions = np.full(shape=y.shape, fill_value=self.mean())
+    def predict(self, y, X=None, method='distribution', **kwargs):
+        '''Returns an array with predictions for an input sample.'''
+        y = np.atleast_1d(y)
+        if method == 'distribution' or method == None:
+            return [self.distribution.copy() for y_t in y]
+        elif method == 'mean':
+            return np.full(shape=y.shape, fill_value=self.mean)
+        elif method == 'mode':
+            return np.full(shape=y.shape, fill_value=self.mode)
+        elif method == 'median':
+            return np.full(shape=y.shape, fill_value=self.median)
+        elif method == 'var':
+            return np.full(shape=y.shape, fill_value=self.var)
+        elif method == 'std':
+            return np.full(shape=y.shape, fill_value=self.std)
         else:
             raise NotImplementedError('Prediction method not implemented')
-        return predictions
 
     def draw(self, size=1, return_distributions=False):
         '''Draw a random sequence of specified length.'''
@@ -66,6 +77,53 @@ class ModelMixin:
         else:
             return sample
 
+    def forecast(self, horizons=[1], method=None, **kwargs):
+        '''returns a forecast of h steps ahead.'''
+        # make sure horizons is iterable
+        horizons = np.atleast_1d(horizons)
+
+        # calculate forecasts
+        forecasts = []
+        for horizon in horizons:
+            forecast_model = self.iterate(horizon)
+            distribution = forecast_model.distribution
+
+            # extract forecast statistic
+            if method == None or method == 'distribution':
+                forecasts += [distribution]
+            elif method == 'mean':
+                forecasts += [distribution.mean]
+            elif method == 'mode':
+                forecasts += [distribution.mode]
+            elif method == 'median':
+                forecasts += [distribution.median]
+            elif method == 'var':
+                forecasts += [distribution.var]
+            elif method == 'std':
+                forecasts += [distribution.std]
+            else:
+                raise NotImplementedError('Forecast method not implemented')
+        return forecasts
+
+    def likelihood(self, y, X=None, **kwargs):
+        '''Returns the likelihoods of the observations in a sample.'''
+        distributions = self.predict(y=y, X=X, **kwargs)
+        likelihood = [dist_t.pdf(y_t) for y_t, dist_t in zip(y, distributions)]
+        return likelihood
+
+    def score(self, y, X=None, weights=None, **kwargs):
+        '''Returns the (weighted) log-likelihood of a sample.'''
+
+        # weights
+        if weights is None:
+            weights = np.ones(np.array(y).shape)
+        else:
+            weights = np.array(weights)
+
+        # score log-likelihood
+        score = (weights * np.log(self.likelihood(y=y, X=X, weights=weights, **kwargs))).sum()
+        return score
+
 
 class NormalModel(ModelMixin, EstimationMixin, NormalDistribution):
     '''i.i.d. normal distribution model.'''
@@ -74,14 +132,6 @@ class NormalModel(ModelMixin, EstimationMixin, NormalDistribution):
         self.mu = mu
         self.sigma = sigma
         ModelMixin.__init__(self)
-    
-    @property
-    def loc(self):
-        return self.mu
-    
-    @property
-    def scale(self):
-        return self.sigma
     
     @property
     def params(self):
@@ -134,14 +184,6 @@ class StudentTModel(ModelMixin, EstimationMixin, StudentTDistribution):
         ModelMixin.__init__(self)
     
     @property
-    def loc(self):
-        return self.mu
-    
-    @property
-    def scale(self):
-        return self.sigma
-    
-    @property
     def params(self):
         params = {'df': self.df,
                   'mu': self.mu,
@@ -160,11 +202,14 @@ class StudentTModel(ModelMixin, EstimationMixin, StudentTDistribution):
             (self.df, self.mu, self.sigma) = sp.stats.t.fit(y)
         
         # update weights
-        w_ = ((self.df+1)*self.sigma**2) / (self.df*self.sigma**2 + self.squared_errors(y))
+        w_ = ((self.df+1)*self.sigma**2) \
+                / (self.df*self.sigma**2 + self.squared_errors(y))
         self.w_ = w_
 
     def _m_step(self, y, weights):
-        '''Performs the maximisation step to update location and scale of the distribution.'''
+        '''Performs the maximisation step to update location and
+        scale of the distribution.
+        '''
         # update mu
         self.mu = np.average(y, weights=weights*self.w_)
         
@@ -189,12 +234,15 @@ class StudentTModel(ModelMixin, EstimationMixin, StudentTDistribution):
         '''Extracts and returns a NormalDistribution object
         with the the same parameters as the model.
         '''
-        distribution = StudentTDistribution(mu=self.mu, sigma=self.sigma, df=self.df)
+        distribution = StudentTDistribution(mu=self.mu,
+                                            sigma=self.sigma,
+                                            df=self.df)
         return distribution
 
     def __str__(self):
         '''Returns a summarizing string.'''
-        string = 'StudentTModel(mu={}, sigma={}, df={})'.format(round(self.mu, 4), round(self.sigma, 4), round(self.df, 4))
+        string = 'StudentTModel(mu={}, sigma={}, df={})'\
+            .format(round(self.mu, 4), round(self.sigma, 4), round(self.df, 4))
         return string
         
         
