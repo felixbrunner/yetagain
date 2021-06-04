@@ -2,6 +2,7 @@
 
 import numpy as np
 import copy
+import warnings
 
 ### CLASSES ###
 
@@ -23,6 +24,7 @@ class EstimationMixin:
         '''Prepares instance for estimation'''
         EstimationMixin.__init__(self)
         self.estimation['scores'] += [self.score(y=y, X=X, weights=weights)]
+        self.estimation['T'] = len(y)
     
     @staticmethod
     def _prepare_y(y):
@@ -50,7 +52,8 @@ class EstimationMixin:
             weights = np.array(weights)
             assert weights.shape[0] == y.shape[0], \
                 'weights need to match number of observations'
-        return weights
+        importance_weights = weights/weights.mean()
+        return importance_weights
     
     @classmethod
     def _prepare_data(cls, y, X, weights=None):
@@ -84,12 +87,12 @@ class EstimationMixin:
         self._step(y, X, weights)
         
         # update estimation attributes
-        self._update_estimation(y, X, weights)   
-        
+        self._update_estimation(y, X, weights)
         
     def _estimate(self, y, X=None, weights=None, max_iter=100, threshold=1e-6):
         '''Performs parameter estimation through an iterative procedure.
         Requires the class to define a step() method that defines one fitting iteration.
+        Returns a fitted copy of the model.
         '''
         # initialise
         self._initialise_estimation(y, X, weights)
@@ -97,19 +100,22 @@ class EstimationMixin:
         
         # run
         while self.iteration < max_iter and self.converged == False:
-            self.step(y, X=X, weights=weights)
+            self._step(y=y, X=X, weights=weights)
+            self._update_estimation(y=y, X=X, weights=weights)
+            
             self._check_convergence(threshold=threshold)
             if self.iteration == max_iter:
                 warnings.warn('maximum number of iterations reached')
-            
         return self
       
-    def fit(self, y, X=None, weights=None):
+    def fit(self, y, X=None, weights=None, max_iter=100, threshold=1e-6):
         '''Fits the model parameters to an observation sequence.
         weights are optional.
+        Fits paramters in place and returns the model.
         '''
-        self =  self._estimate(y, X=X, weights=weights, max_iter=100, threshold=1e-6)
-        self.is_fitted = True 
+        self =  self._estimate(y, X=X, weights=weights, max_iter=max_iter, threshold=threshold)
+        self.is_fitted = True
+        return self
     
     def __repr__(self):
         return str(self)
