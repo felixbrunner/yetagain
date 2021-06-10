@@ -394,12 +394,15 @@ class MixtureDistribution(DistributionMixin):
         if moment is 1:
             return 0
         else:
-            mean = self.mean()
-            inputs = [(component.mean, component.std, weight) for (component, weight) in self.components]
+            mean = self.mean
+            inputs = [(component.mean, component.std, weight) \
+                            for (component, weight) in self.components]
             central_moment = 0
             for (m, s, w) in inputs:
                 for k in range(moment+1):
-                    product = sp.special.comb(moment, k) * (m-mean)**(moment-k) * sp.stats.norm(loc=0, scale=s).moment(k)
+                    product = sp.special.comb(moment, k) \
+                                * (m-mean)**(moment-k) \
+                                * sp.stats.norm(loc=0, scale=s).moment(k)
                     central_moment += w * product
             return central_moment
     
@@ -474,8 +477,10 @@ class MixtureDistribution(DistributionMixin):
 
     def draw(self, size=1, return_states=False):
         '''Draw a random sample from a mixture distribution.'''
-        states = np.random.choice(self.n_components, size=size, replace=True, p=self.weights)
-        sample = np.fromiter((self.components[i][0].draw() for i in states), dtype=np.float64)
+        states = np.random.choice(self.n_components, size=size,
+                                  replace=True, p=self.weights)
+        sample = np.fromiter((self.components[i][0].draw() for i in states),
+                             dtype=np.float64)
         
         if size is 1:
             sample = sample[0]
@@ -540,7 +545,7 @@ class ProductDistribution(DistributionMixin):
         ''' Returns the distribution mean.'''
         prod = 1
         for factor in self.factors:
-            m = factor.mean()
+            m = factor.mean
             prod *= m
         mean = prod
         return mean
@@ -550,7 +555,7 @@ class ProductDistribution(DistributionMixin):
         '''Returns the distribution variance.'''
         prod1, prod2 = 1, 1
         for factor in self.factors:
-            (m, s) = (factor.mean(), factor.var())
+            (m, s) = (factor.mean, factor.var)
             prod1 *= m**2+s
             prod2 *= m**2
         var = prod1 - prod2
@@ -561,7 +566,7 @@ class ProductDistribution(DistributionMixin):
         '''Returns the distribution skewness.'''
         prod1, prod2, prod3 = 1, 1, 1
         for factor in self.factors:
-            (m, s, g) = (factor.mean(), factor.var(), factor.central_moment(3))
+            (m, s, g) = (factor.mean, factor.var, factor.central_moment(3))
             prod1 *= g+3*m*s+m**3
             prod2 *= m*s+m**3
             prod3 *= m**3
@@ -574,7 +579,7 @@ class ProductDistribution(DistributionMixin):
         '''Returns the distribution kurtosis.'''
         prod1, prod2, prod3, prod4 = 1, 1, 1, 1
         for factor in self.factors:
-            (m, s, g, k) = (factor.mean(), factor.var(), factor.central_moment(3), factor.central_moment(4))
+            (m, s, g, k) = (factor.mean, factor.var, factor.central_moment(3), factor.central_moment(4))
             prod1 *= k+4*m*g+6*m**2*s+m**4
             prod2 *= m*g+3*m**2*s+m**4
             prod3 *= m**2*s+m**4
