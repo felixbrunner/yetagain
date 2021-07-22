@@ -383,7 +383,17 @@ class MixtureDistribution(DistributionMixin):
 
     @mean.setter
     def mean(self, new_mean):
-        raise NotImplementedError('mean setting not implemented')
+        '''Moves the mixture distribution such that it has a new mean, while
+        its scale and shape remain unchanged. Adjusts the means of all
+        component distributions accordingly inplace.
+        '''
+        # setup
+        addition = new_mean - self.mean
+        new_components = []
+
+        # adjust all component means
+        for component, weight in self.components:
+            component.mean += addition
     
     def central_moment(self, moment):
         '''Returns the central moment of input order.'''
@@ -411,6 +421,22 @@ class MixtureDistribution(DistributionMixin):
         '''Returns the distribution variance.'''
         return self.central_moment(2)
 
+    @var.setter
+    def var(self, new_var):
+        '''Scales the mixture distribution such that it has a new variance,
+        while its location and shape remain unchanged. Adjusts the means and
+        variances of all component distributions accordingly inplace.
+        '''
+        # setup
+        scaling = new_var / self.var
+        mean = self.mean
+        new_components = []
+
+        # scale all component means & variances
+        for component, weight in self.components:
+            component.mean = mean + (component.mean - mean) * np.sqrt(scaling)
+            component.var *= scaling
+
     @property
     def skew(self):
         '''Returns the distribution skewness.'''
@@ -428,12 +454,10 @@ class MixtureDistribution(DistributionMixin):
         mode = self.component_modes[np.argmax(pdfs)]
         return mode
 
-        # raise NotImplementedError('MixtureDistribution mode not implemented')
-
     @property
     def median(self):
         '''Returns the median of the distribution.'''
-        raise NotImplementedError('MixtureDistribution mode not implemented')
+        raise NotImplementedError('MixtureDistribution median not implemented')
     
     def entropy(self, level='state'):
         '''Returns Shannon's entropy based on logarithms with base n of the n component probabilities.'''
