@@ -25,15 +25,13 @@ class MarkovChain:
             'transition matrix needs to be square'
 
         # check if matrix is transition matrix (rows sum to one)
-        assert all(transition_matrix.sum(axis=1).round(8) == 1), \
-            'transition matrix rows need to sum to one'
         if any(transition_matrix.sum(axis=1) != 1):
-            transition_matrix = transition_matrix.round(8)
-            warnings.warn('transition probabilities rounded to 8 digits')
+            transition_matrix /= transition_matrix.sum(axis=1).reshape(-1, 1)
+            warnings.warn('transition probabilities transformed into probabilities')
         
         # check if dimensions match
         if hasattr(self, 'state') and self.state is not None:
-            assert transition_matrix.shape[0] == len(self.state), \
+            assert len(transition_matrix) == self.state.shape[1], \
                     'state vector dimension mismatch'
         
         self._transition_matrix = transition_matrix
@@ -41,14 +39,6 @@ class MarkovChain:
     @property
     def state(self):
         '''The current state vector.'''
-        return self._state
-
-    ### DEPRECIATE
-    @property
-    def state_vector(self):
-        '''The current state vector.
-        DEPRECIATED, USE STATE INSTEAD.
-        '''
         return self._state
     
     @state.setter
@@ -66,12 +56,9 @@ class MarkovChain:
                 'probabilites need to be bounded between zero and one'
 
             # make sure input is a state vector (probabilities sum to one)
-            assert state.sum(axis=1).round(8) == 1, \
-                'state vector needs to sum to approximately one'
             if state.sum() != 1:
-                state = state.round(8)# \
-                                    #/transition_matrix.round(8).sum()
-                warnings.warn('state probability vector rounded to 8 digits')
+                state /= state.sum()
+                warnings.warn('state probability vector transformed into probabilities')
 
             # check if dimensions match
             if hasattr(self, 'transition_matrix') \
@@ -82,7 +69,7 @@ class MarkovChain:
             self._state = state
 
     @property
-    def steady_state(self, set_state=False):
+    def steady_state(self):
         '''Returns the steady state probabilities of the Markov chain.
         If set_state=True, MarkovChain object is modified in place.
         '''
@@ -90,10 +77,11 @@ class MarkovChain:
         q = np.c_[(self.transition_matrix-np.eye(dim)), np.ones(dim)]
         QTQ = np.dot(q, q.T)
         steady_state = np.linalg.solve(QTQ, np.ones(dim))
-        if set_state:
-            self.state = steady_state
-        else:
-            return steady_state
+        return steady_state.reshape(1, -1)
+
+    def set_to_steady_state(self):
+        '''Set the steady state as the MarkovChain object state.'''
+        self.state = self.steady_state
         
     def expected_durations(self):
         '''Returns the expected state durations of the MarkovChain object.'''
@@ -152,7 +140,7 @@ class MarkovChain:
         '''
         # setup
         sample = []
-        draw_probabilities = self.state @ self.transition_matrix
+        draw_probabilities = (self.state @ self.transition_matrix).squeeze()
 
         for step in range(size):
             # draw new state
@@ -184,3 +172,15 @@ class MarkovChain:
         string += 'transition_matrix=\n{},\n'.format(self.transition_matrix.__str__())
         string += 'state=\n{}\n)'.format(self.state.__str__())
         return string
+
+    @property
+    def is_ergodic(self):
+        raise NotImplementedError('ergodicity not implemented')
+    
+    @property
+    def is_aperiodic(self):
+        raise NotImplementedError('aperiodicity not implemented')
+
+    @property
+    def is_irreducible(self):
+        raise NotImplementedError('irreducibility not implemented')
